@@ -15,7 +15,7 @@ Metadata cache misses are kryptonite for ZFS performance and provide
 particularly valuable information.
 
 I don't really love Perl but it's by far the easiest way to extract 
-this data.  There are only three API's available for Illumos/Solaris 
+these metrics.  There are only three access methods for Illumos/Solaris 
 kstat(): C, Perl, and the 'kstat' shell executable.   
 
 This code was written on OmniOS and it works on OpenIndiana.  
