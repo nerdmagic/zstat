@@ -10,7 +10,7 @@ graphite/carbon for logging, monitoring and visualization.
 Stats are stored at 10 second intervals as total counters, but it is
 trivial to take derivatives from graphite for rates.
 
-zstatd has been valuable for tuning and debugging.  arc metadata 
+zstatd has been valuable for tuning and debugging.  ARC metadata 
 cache misses provide especially useful info as they are kryptonite 
 for ZFS performance. 
 
