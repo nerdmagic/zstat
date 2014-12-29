@@ -1,0 +1,314 @@
+#!/usr/bin/perl
+##
+## zstatd
+##
+## Perl daemon to feed ZFS-relevant kstat statistics to carbon aggregator (graphite)
+## 
+## Version 0.1 2013/12/17  Trey Palmer
+##
+## Copyright (c) 2013 Georgia Institute of Technology
+## All rights reserved.
+
+#my $debug = 1; 
+
+use warnings;
+
+use Schedule::ByClock;
+use Net::Server::Daemonize qw(daemonize);
+use Sun::Solaris::Kstat;
+use Sys::Hostname;
+use IO::Socket::INET;
+use Config::Simple;
+
+$SIG{'INT'}  = 'Terminate';
+$SIG{'TERM'} = 'Terminate';
+$SIG{'QUIT'} = 'Terminate';
+$SIG{'HUP'}  = 'Terminate';
+$SIG{'STOP'} = 'Terminate';
+
+setpgrp(0,0);
+
+$|++;
+
+my $sock;   # TCP socket for connecting to graphite server
+
+#######################################################################################
+####   Config variables -- set in /usr/local/etc/zstat.conf
+####   Only $carbon_server is required, the others will set defaults
+#######################################################################################
+
+my $cfgfile="/usr/local/etc/zstat.conf";
+
+Config::Simple->import_from($cfgfile, \%config);
+
+my $logfile = $config{"default.logfile"} || "/var/log/zstatd.log";
+my $pidfile = $config{"default.pidfile"} || "/var/run/zstatd.pid";
+my $carbon_server = $config{"default.carbon_server"} || die "carbon_server not set in $cfgfile";
+my $carbon_port = $config{"default.carbon_port"} || "2003";
+my $carbon_prefix = $config{"default.carbon_prefix"} || "zfs";
+my @invalid_disks = ();
+if (defined $config{"default.invalid_disks"})  {
+   @invalid_disks = split(/:/,$config{"default.invalid_disks"}); 
+}
+####  end config variables
+
+my $hostname = hostname;
+my ($shortname, $domain) = split(/\./, $hostname, 2);
+
+#### the big kahuna -- the main stat hash!   
+my %stats; 
+
+##################################################################################################
+##
+## metadata hash -- this maps the structure of the data we are retrieving from kstat
+##  
+## Five data types corresponding to five different kstat modules
+##      arc -- adaptive replacement cache
+##      zpool -- overall zpool throughput
+##      stmf  -- COMSTAR target throughput 
+##      disk  -- physical disk throughput
+##      net   -- network throughput
+##
+## Each type section has these metadata types:
+##    sum => 1 if we are summing multiple instances, zero if there can only be one instance
+##        instances => 0, then reset when instances are discovered by Init()
+##        disabled  => 1 if the service can be disabled, then reset to 0 if discovered by Init()
+##    @kref =>  path within kstat as array:  class, instance [, module]
+##    @metrics => array of individual kstat names to retrieve
+##
+#################################################################################################
+
+my %meta = (
+    'arc'   => {  'sum' => 0,
+                  'kref' => [ 'zfs', 0, 'arcstats' ],
+                  'metrics' =>  [ "size",
+                                  "arc_meta_used",
+                                  "hits",
+                                  "misses",
+                                  "demand_data_hits",
+                                  "demand_data_misses",
+                                  "demand_metadata_hits",
+                                  "demand_metadata_misses",
+                                  "prefetch_data_hits",
+                                  "prefetch_data_misses",
+                                  "prefetch_metadata_hits",
+                                  "prefetch_metadata_misses",
+                                  "l2_hits",
+                                  "l2_misses",
+                                  "l2_read_bytes",
+                                  "l2_write_bytes"
+                                 ]
+                },
+    'zpool' => {  'sum' => 0,
+                  'kref' => [ 'zone_zfs', 0, 'global' ],
+                  'metrics' => [ 'reads', 'writes', 'nread', 'nwritten']
+                },
+    'stmf'  => {  'sum' => 1,
+                  'disabled' => 1,
+                  'instances' => [ 0 ],
+                  'kref' => [ 'stmf', 0 ],
+                  'metrics' => [ 'reads', 'writes', 'nread', 'nwritten']
+               },
+    'disk'  => {  'sum' => 1,
+                  'instances' => [ 0 ],
+                  'kref' => [ 'sd', 'NUM' ],
+                  'metrics' => [ 'reads', 
+                                 'writes', 
+                                 'nread', 
+                                 'nwritten',
+                                 'wlentime',
+                                 'rlentime',
+                                 'rtime',
+                                 'wtime',
+                                 'wcnt'
+                               ]
+
+               },
+     'net'  => {  'sum' => 1,
+                  'instances' => [ 0 ],
+                  'kref' => [ 'link', '0' ],
+                  'metrics' => [ 'rbytes64', 'obytes64' ]
+                }
+           );
+
+
+## Set up the kstat hash
+my $kstat = Sun::Solaris::Kstat->new();
+
+## Set up for 10 second intervals
+my $th = Schedule::ByClock->new(0,10,20,30,40,50);
+
+## Daemonize unless we're debug mode
+if (!defined $debug) {
+    daemonize(
+        'root',
+        'root',
+        $pidfile
+    );
+} 
+
+#####################################
+## Functions start 
+#####################################
+
+### Standard housekeeping functions
+sub Log {
+    $string = $_[0];
+    my $timestamp = localtime();
+    $log = open (LOG, ">>$logfile") || die "ERROR opening $logfile\n$!";
+    if ($log) {
+        print LOG "$timestamp - $$:  $string\n";
+        return 1;
+    }
+    close (LOG);
+    return 0;
+}
+
+sub DieClean {
+    $diestring = $_[0];
+    Log "$diestring\n$!";
+    $sock->shutdown(2) if ($sock->connected);
+    die "$diestring\n$!";
+}
+
+sub Terminate {
+    $signal = @_;
+    DieClean "Interrupt:  Caught signal $signal, exiting";
+}
+
+### SnapStats() -- called by main loop at standard time interval to refresh $stats hash from kstat
+sub SnapStats {
+   ## First refresh kstat values
+   if ($kstat->update()) {
+      Log "<State changed!>";
+   }
+   ## now parse through the metadata keys and fill the $stats hash
+   my $ktemp = $kstat; 
+   foreach my $type (keys %meta) {
+      print "$type\n" if $debug;
+      ## skip if the service is disabled 
+      next if ($meta{$type}{"disabled"});
+      ## sum=0 means only one instance, very simple
+      unless ($meta{$type}{"sum"}) {
+          my @kref = @{$meta{$type}{"kref"}};
+          print join (',', @kref) . "\n" if $debug;
+          next unless (exists $ktemp->{$kref[0]});
+          next unless (exists $ktemp->{$kref[0]}{$kref[1]});
+          next unless (exists $ktemp->{$kref[0]}{$kref[1]}{$kref[2]});
+          $stats{$type} = $ktemp->{$kref[0]}{$kref[1]}{$kref[2]};
+      }
+      else {
+         ## sum=1 means multiple possible instances so we have to sum their values
+         ## zero metric values in $stats
+         foreach my $metric (@{$meta{$type}{"metrics"}}) {
+            if (defined $stats{$type}{$metric}) {
+                $stats{$type}{$metric} = 0;
+                print "zeroing $type $metric\n" if $debug;
+            }
+         }
+         foreach my $inst (@{$meta{$type}{"instances"}}) {
+            my @kref; 
+            if ( $type =~ /disk/ ) {
+               @kref = ( "sd", $inst, "sd" . $inst );
+            } else { 
+               @kref = @{$meta{$type}{"kref"}};
+               push (@kref, $inst);
+            }
+            next unless (exists $ktemp->{$kref[0]});
+            next unless (exists $ktemp->{$kref[0]}{$kref[1]});
+            next unless (exists $ktemp->{$kref[0]}{$kref[1]}{$kref[2]});
+            my $hashref = $ktemp->{$kref[0]}{$kref[1]}{$kref[2]};
+            if ($hashref) {
+               foreach my $metric (@{$meta{$type}{"metrics"}}) {
+                  if (defined $hashref->{$metric}) {
+                     $stats{$type}{$metric} += $hashref->{$metric};
+                  } else {
+                  }
+               }
+            } else {
+               print "$type " . join(':', @kref) . " undefined\n" if $debug;
+            }
+         }
+      } #else
+   } #foreach 
+}  ## end SnapStats()
+
+### Init()
+### Initialize individual kstats -- discover number of instances and whether services are running
+### Not needed for arc or zpool -- always on, always only one instance
+sub Init {
+## Initialize stmf kstat (COMSTAR target)
+  my $stmf_service = `svcs -H -o state stmf`;
+  chomp $stmf_service;
+  if ($stmf_service =~ /online/) {
+     $meta{"stmf"}{"disabled"} = 0;
+     my $stmf_hash = $kstat->{"stmf"}{0};
+     my @stmf_tgts = grep { /^stmf_tgt_io/ } keys %$stmf_hash;
+     @{$meta{"stmf"}{"instances"}} = @stmf_tgts;
+  }
+  print "stmf_disabled " . $meta{"stmf"}{"disabled"} . "\n" if $debug;
+
+## Initialize sd kstat (physical disk)
+  my $sderr_hash = $kstat->{"sderr"};
+  my @sd_disks; 
+  ## check each disk against the list of invalid disk types
+  foreach my $key (keys %$sderr_hash) {
+     my $sderr="sd$key,err";
+     $vendor = $sderr_hash->{$key}{$sderr}{"Vendor"};
+     $vendor =~ tr/ //ds;
+     unless (grep { $vendor =~ $_ } @invalid_disks) {
+     print "$vendor," if $debug;
+        push (@sd_disks, $key );
+     }
+     @{$meta{"disk"}{"instances"}} = @sd_disks;
+  }
+  if ($debug) { 
+     my $disklist = join (", ", @sd_disks); 
+     print "\n\ndisks $disklist\n";
+  }
+
+## Initialize interfaces (kstat network interfaces)
+  my $link_hash = $kstat->{"link"}{"0"};
+  my @interfaces = keys %$link_hash;
+  @{$meta{"net"}{"instances"}} = @interfaces;
+
+## Initialize socket (network connection to Graphite server)
+  $sock = IO::Socket::INET->new(
+     PeerAddr => $carbon_server,
+     PeerPort => $carbon_port,
+     Proto    => 'tcp'
+  );
+}
+
+#####################
+### Functions End
+#####################
+
+Init();
+
+#####################
+### Main loop
+##################### 
+while (1) 
+{
+   $th->get_control_on_second();
+ 
+   $epoch = time(); 
+   
+   SnapStats();
+   
+   DieClean "Unable to connect: $!\n" unless ($sock->connected);
+
+   foreach my $type (keys %meta) {
+      next if ($meta{$type}{"disabled"});
+      foreach my $metric(@{$meta{$type}{"metrics"}}) {
+         if (defined $stats{$type}{$metric}) {
+            my $name = "$carbon_prefix.$shortname.$type.$metric";
+            my $value = $stats{$type}{$metric};
+            my $message = "$name $value $epoch\n";
+            $sock->send($message) unless $debug;
+            print $message if $debug;
+         }
+      }
+   }
+}

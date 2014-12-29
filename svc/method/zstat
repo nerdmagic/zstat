@@ -1,0 +1,38 @@
+#!/bin/bash
+#
+# kstat SMF start/stop script
+
+. /lib/svc/share/smf_include.sh
+
+PATH=$PATH:/usr/perl5/bin
+
+zstatd=/usr/local/sbin/zstatd
+pidfile=${zstatd_pidfile:-/var/run/zstatd.pid}
+
+case $1 in 
+'start')
+	$zstatd
+	;;
+
+'stop')
+	if [ -e $pidfile ]
+	then
+		kill -TERM `cat $pidfile`
+	else
+		pkill -TERM -U 0 zstatd
+		echo > /dev/null
+	fi
+	;;
+
+'restart')
+	$0 stop 
+	$0 start
+	;;
+
+*)
+	echo "Usage: $0 { start | stop | restart }"
+	exit 1
+	;;
+esac	
+
+exit $?

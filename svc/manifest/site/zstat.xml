@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!DOCTYPE service_bundle SYSTEM "/usr/share/lib/xml/dtd/service_bundle.dtd.1">
+<!--
+
+Copyright 2013 Georgia Tech Research Institute.  
+
+zstat (zfs kstat -> carbon) manifest 
+Trey Palmer    ISD    2013/12/17
+-->
+
+<service_bundle type='manifest' name='zstat'>
+
+
+<service
+	name='system/zstat'
+	type='service'
+	version='1'>
+
+	<create_default_instance enabled='true' />
+
+	<single_instance />
+
+	<!--
+	Wait for all local filesystems to be mounted.
+	--> 
+	<dependency 
+		name='filesystem-local'
+		grouping='require_all'
+		restart_on='none'
+		type='service'>
+		<service_fmri value='svc:/system/filesystem/local:default'/>
+	</dependency>
+
+	<dependency 
+		name='name-services'
+		grouping='require_all'
+		restart_on='none' 
+ 		type='service'>
+		<service_fmri value='svc:/milestone/name-services' />
+	</dependency>
+
+	<exec_method
+		type='method'
+		name='start'
+		exec='/lib/svc/method/zstat start'
+      timeout_seconds='30'>
+	</exec_method>
+
+	<exec_method
+		type='method'
+		name='stop'
+		exec='/lib/svc/method/zstat stop'
+      timeout_seconds='30'>
+   </exec_method>
+
+        <!-- sub-process kills or core dumps shouldn't restart session -->
+
+	<stability value='Unstable' />
+
+	<template>
+		<common_name>
+			<loctext xml:lang='C'>
+				ZFS Stats
+			</loctext>
+		</common_name>
+	</template>
+
+</service>
+
+</service_bundle>
