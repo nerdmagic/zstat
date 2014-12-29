@@ -1,4 +1,6 @@
 
+License:  Simplified BSD, see LICENSE. 
+
 zstatd is a Perl daemon for Illumos ZFS storage servers that collects 
 storage-relevant system stats from kstat() and feeds them to 
 graphite/carbon for logging, monitoring and visualization.

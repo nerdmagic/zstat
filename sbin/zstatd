@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-##
+######################################################################################
 ## zstatd
 ##
 ## Perl daemon to feed ZFS-relevant kstat statistics to carbon aggregator (graphite)
@@ -8,6 +8,10 @@
 ##
 ## Copyright (c) 2013 Georgia Institute of Technology
 ## All rights reserved.
+##
+## Released under Simplified BSD License.
+##
+######################################################################################
 
 #my $debug = 1; 
 
@@ -50,7 +54,7 @@ my @invalid_disks = ();
 if (defined $config{"default.invalid_disks"})  {
    @invalid_disks = split(/:/,$config{"default.invalid_disks"}); 
 }
-####  end config variables
+##########################  end config variables  #####################################
 
 my $hostname = hostname;
 my ($shortname, $domain) = split(/\./, $hostname, 2);
