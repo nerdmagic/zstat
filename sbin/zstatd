@@ -226,7 +226,6 @@ sub SnapStats {
                foreach my $metric (@{$meta{$type}{"metrics"}}) {
                   if (defined $hashref->{$metric}) {
                      $stats{$type}{$metric} += $hashref->{$metric};
-                  } else {
                   }
                }
             } else {
