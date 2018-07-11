@@ -1,24 +1,35 @@
-
 ## zstat
 
 ### License
 Simplified BSD, see LICENSE.
 
-### Disclaimer
-I probably don't like Perl much more than you do, but at least in 2013 it was by far the easiest way to extract these metrics. The three access methods for Illumos/Solaris kstat() being C, Perl, and the 'kstat' shell executable.
+### Disclaimers
+- I probably don't like Perl much more than you do, but at least in 2013 it was by far the easiest way to extract these metrics. The three access methods for Illumos/Solaris `kstat()` being C, Perl, and the `kstat` shell executable.
 
 ### Description
-zstatd is a Perl daemon for Illumos ZFS storage servers that collects storage-relevant system stats from kstat() and feeds them to graphite/carbon for logging, monitoring and visualization.
+`zstatd` is a Perl script for Illumos ZFS storage servers that collects storage-relevant system stats from `kstat()` for logging, monitoring and visualization.
 
-Stats are stored at 10 second intervals as total counters, but it is trivial to take derivatives from graphite for rates.
+The script is available as a standalone daemon or as a collectd plugin. The daemon version only feeds metrics to Graphite/Carbon. With the collectd version, metrics will go wherever you normally send them via collectd.
 
-zstatd has been valuable for tuning and debugging.  ARC metadata cache misses provide especially useful info as they are kryptonite for ZFS performance.
+Stats are stored as total counters, but for rates it is trivial to take derivatives in Grafana or via the Graphite API.
 
-This code was written on OmniOS and it works on OpenIndiana.  It would probably work on Oracle Solaris and FreeBSD with little modification, but neither has been tested. The Sun::Solaris::Kstat module *does* appear to work on FreeBSD.
+`zstatd` has been valuable for tuning and debugging.  ARC metadata cache misses provide especially useful info as they are kryptonite for ZFS performance.
 
-The SMF service name is svc:/system/zstat:default and the self-documenting config file is zstat.conf, per the Illumos/Solaris standard.
+This code was written on OmniOS and it works on OpenIndiana.  It would probably work on Oracle Solaris and FreeBSD with little modification, but neither has been tested. The `Sun::Solaris::Kstat` Perl module *does* appear to work on FreeBSD.
 
-See sbin/zstatd for required Perl modules.
+It probably won't work on Linux. Fortunately, the ZFSonLinux SPL (Solaris Portability Layer) places the ZFS kstats in `/proc/spl/kstat/zfs`, where one can access them with normal modern Linux DevOps methods that don't involve esoteric Perl libraries.
+
+### Collectd plugin
+
+The `zstat` collectd plugin is at `collectd/collectd-zstat.pl`, and an example config file is in `collectd/plugins.d`. This is in service and working as of July 2018, using collectd version 5.5.0.
+
+### Daemon
+
+AFAIK the daemon version here hasn't been run or tested since converting to collectd in 2015.
+
+The SMF service name is `svc:/system/zstat:default` and the self-documenting config file is `zstat.conf`.
+
+See `sbin/zstatd` for required Perl modules.
 
 Files (with intended install prefixes):
 
@@ -27,5 +38,4 @@ Files (with intended install prefixes):
 [/usr/local/] etc/zstat.conf               -- config file
 [/lib/]       svc/method/zstat             -- SMF start/stop script
 [/var/]       svc/manifest/site/zstat.xml  -- SMF service manifest
-samples/      -- sample graphite images using zstatd metrics
 ```
