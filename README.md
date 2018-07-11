@@ -6,6 +6,8 @@ Simplified BSD, see LICENSE.
 ### Disclaimers
 - I probably don't like Perl much more than you do, but at least in 2013 it was by far the easiest way to extract these metrics. The three access methods for Illumos/Solaris `kstat()` being C, Perl, and the `kstat` shell executable.
 
+- AFAIK the daemon version here hasn't been run or tested since converting to collectd in 2015. The collectd plugin is in service as of July 2018 using collectd 5.5.0.
+
 ### Description
 `zstatd` is a Perl script for Illumos ZFS storage servers that collects storage-relevant system stats from `kstat()` for logging, monitoring and visualization.
 
@@ -24,8 +26,6 @@ It probably won't work on Linux. Fortunately, the ZFSonLinux SPL (Solaris Portab
 The `zstat` collectd plugin is at `collectd/collectd-zstat.pl`, and an example config file is in `collectd/plugins.d`. This is in service and working as of July 2018, using collectd version 5.5.0.
 
 ### Daemon
-
-AFAIK the daemon version here hasn't been run or tested since converting to collectd in 2015.
 
 The SMF service name is `svc:/system/zstat:default` and the self-documenting config file is `zstat.conf`.
 
